@@ -1,7 +1,7 @@
 name: hermes-final-delivery
-version: 0.1.0
+version: 0.2.0
 kind: standalone
-description: Route one post-tool final reply to a configured model on the current provider
+description: Route one post-tool final reply to a provider-specific delivery model
 license: MIT
 tags:
   - agent
@@ -18,11 +18,16 @@ provides_hooks:
 provides_middleware:
   - llm_request
 config_schema:
+  writer_models:
+    type: dict
+    default: {}
+    required: false
+    description: Mapping from normalized Hermes provider IDs to same-provider delivery model IDs
   writer_model:
     type: str
     default: ""
     required: false
-    description: Model ID for the one-response handoff; it must use the main agent's current provider, client, and API mode
+    description: Optional fallback model when the current provider has no entry in writer_models
   max_draft_chars:
     type: int
     default: 20000

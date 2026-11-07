@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from .commands import COMMAND_DESCRIPTION, COMMAND_NAME, DeliveryModelCommands
 from .constants import (
     HANDOFF_INSTRUCTION,
     NOT_ARMED_MESSAGE,
@@ -15,6 +16,7 @@ from .constants import (
     TOOL_SCHEMA,
     TOOLSET,
 )
+from .model_config import WriterModelConfig
 from .state import DeliveryState, Owner
 
 DEFAULT_MAX_DRAFT_CHARS = 20_000
@@ -64,6 +66,7 @@ class FinalDeliveryPlugin:
             maximum=3600,
         )
         self.state = DeliveryState(ttl_seconds=ttl)
+        self.model_config = WriterModelConfig(ctx)
 
     def owner(self, *, task_id: Any = None, session_id: Any = None) -> Owner:
         return (
@@ -80,8 +83,7 @@ class FinalDeliveryPlugin:
         session_id: Any = None,
         **_: Any,
     ) -> str:
-        writer_model = str(self.ctx.get_config("writer_model", "") or "").strip()
-        if not writer_model:
+        if not self.model_config.has_any():
             return _json_result(error=NOT_ARMED_MESSAGE)
 
         draft = args.get("draft") if isinstance(args, dict) else None
@@ -109,8 +111,7 @@ class FinalDeliveryPlugin:
             )
 
         delivery_id = self.state.create(
-            owner=self.owner(task_id=task_id, session_id=session_id),
-            writer_model=writer_model,
+            owner=self.owner(task_id=task_id, session_id=session_id)
         )
         return _json_result(
             success=True,
@@ -174,6 +175,7 @@ class FinalDeliveryPlugin:
         session_id: Any = None,
         turn_id: Any = None,
         api_request_id: Any = None,
+        provider: Any = None,
         **_: Any,
     ) -> dict[str, Any] | None:
         if not isinstance(request, dict):
@@ -182,6 +184,7 @@ class FinalDeliveryPlugin:
             owner=self.owner(task_id=task_id, session_id=session_id),
             turn_id=str(turn_id or ""),
             api_request_id=str(api_request_id or ""),
+            writer_model=self.model_config.resolve(provider),
         )
         if lease is None:
             return None
@@ -251,6 +254,7 @@ class FinalDeliveryPlugin:
 def register(ctx: Any) -> None:
     """Register the tool, guard hooks, and one-request routing middleware."""
     plugin = FinalDeliveryPlugin(ctx)
+    commands = DeliveryModelCommands(plugin.model_config)
     ctx.register_tool(
         name=TOOL_NAME,
         toolset=TOOLSET,
@@ -265,4 +269,20 @@ def register(ctx: Any) -> None:
     ctx.register_hook("api_request_error", plugin.api_request_error)
     ctx.register_hook("on_session_end", plugin.on_session_end)
     ctx.register_middleware("llm_request", plugin.llm_request)
+    ctx.register_command(
+        COMMAND_NAME,
+        handler=commands.handle_slash,
+        description=COMMAND_DESCRIPTION,
+        args_hint="[list|set <provider> <model>|unset <provider>|default <model>|clear-default]",
+        argument_mode="text",
+    )
+    ctx.register_cli_command(
+        name=COMMAND_NAME,
+        help=COMMAND_DESCRIPTION,
+        setup_fn=commands.setup_cli,
+        handler_fn=commands.handle_cli,
+        description=(
+            "Manage provider-specific models used for the one-response final-delivery handoff."
+        ),
+    )
     ctx.on_unload(plugin.state.clear)

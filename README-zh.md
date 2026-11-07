@@ -7,14 +7,14 @@
 1. 主模型完成并验证一项较复杂的任务。
 2. 主模型单独调用 `final_delivery`，传入一份完整、可直接交付给用户的 `draft`。
 3. 插件只修改下一个逻辑 LLM 请求的 `model` 字段，并移除该请求中的所有工具定义和工具控制字段。
-4. 用户配置的表达模型正常以流式方式生成最终回复。
+4. 插件为当前 Provider 配置的表达模型正常以流式方式生成最终回复。
 5. 一次性路由租约随即失效；后续所有请求重新使用主模型。
 
 插件不会修改 Hermes 的全局或默认模型配置。
 
 ## 重要限制
 
-`writer_model` 必须能够通过主 Agent **当前使用的 Provider、客户端和 API 模式**访问。例如，同一网关提供的两个模型 ID 通常可以使用。本插件不能把原本发往 OpenAI 客户端的单次请求静默切换到 Anthropic 或其他无关 Provider 的客户端。
+`writer_models` 中的每个模型都必须能够通过对应 Provider **当前使用的客户端和 API 模式**访问。例如，同一网关提供的两个模型 ID 通常可以使用。本插件不能把原本发往 OpenAI 客户端的单次请求静默切换到 Anthropic 或其他无关 Provider 的客户端。
 
 由于这是主循环内的请求路由，表达模型会收到该请求已有的完整对话历史，而不只是 `draft`。请仅选择你信任其处理当前对话内容的同 Provider 模型。
 
@@ -29,12 +29,41 @@ plugins:
   entries:
     hermes-final-delivery:
       settings:
-        writer_model: "同一-PROVIDER-下的模型-ID"
+        writer_models:
+          openrouter: "anthropic/claude-sonnet-4.5"
+          ollama: "qwen3:14b"
+        writer_model: "可选的回退模型-ID"
         max_draft_chars: 20000
         pending_ttl_seconds: 300
 ```
 
-`writer_model` 默认故意留空。在完成配置前，`final_delivery` 会返回错误并要求主模型自行发送其草稿，而不会将请求路由到未知位置。
+Provider ID 会统一转换为小写。当前 Provider 若匹配 `writer_models`，该项优先；`writer_model` 是没有专用项时使用的可选回退。所有路由默认故意留空。至少配置一项前，`final_delivery` 会返回错误并要求主模型自行发送草稿，而不会路由到未知位置。如果已有其他 Provider 的配置，但当前 Provider 没有匹配项或回退，本次交付会安全地留在默认模型上。只有当同一个模型 ID 在你使用的所有未映射 Provider 中都有效时，才应配置回退模型。
+
+## 模型配置命令
+
+插件始终注册可在 host 隔离模式下工作的会话内命令：
+
+```text
+/final-delivery-model list
+/final-delivery-model set openrouter anthropic/claude-sonnet-4.5
+/final-delivery-model unset openrouter
+/final-delivery-model default fallback/model-id
+/final-delivery-model clear-default
+```
+
+这些命令会更新当前 Profile 的插件设置。插件会在构建交付请求时读取映射，因此修改会从下一次交付开始生效，并且不会改变当前会话的工具集。
+
+当 Hermes 让第三方插件在主进程中运行时，插件还会注册等价的终端命令：
+
+```powershell
+hermes final-delivery-model list
+hermes final-delivery-model set openrouter anthropic/claude-sonnet-4.5
+```
+
+当配置为 `plugins.isolation: host` 时，Hermes 会有意跳过插件提供的
+`hermes <command>`：本地 `argparse` 解析器无法跨越插件 Host 进程边界。此时请使用
+`/final-delivery-model`，或通过 Hermes 的常规配置入口修改插件设置。修改配置的 Slash
+命令会写入当前 Profile，因此只应允许受信任的用户执行。
 
 ## 安全与失败处理
 
@@ -65,10 +94,10 @@ hermes plugins validate C:\Users\88888888\user-workshop\hermes-final-delivery
 
 ## 手动安装（本仓库不会自动执行）
 
-请先运行上面的验证命令。然后将本目录复制到当前 Profile 的插件目录，并命名为 `hermes-final-delivery`；默认位置通常是 `$HOME\.hermes\plugins\hermes-final-delivery`。随后启用插件、配置 `writer_model`，并新建一个 Hermes 会话：
+请先运行上面的验证命令。然后将本目录复制到当前 Profile 的插件目录，并命名为 `hermes-final-delivery`；默认位置通常是 `$HOME\.hermes\plugins\hermes-final-delivery`。随后启用插件、至少配置一项 `writer_models` 路由或 `writer_model` 回退，并新建一个 Hermes 会话：
 
 ```powershell
 hermes plugins enable hermes-final-delivery
 ```
 
-在审阅代码并选择与主 Agent 同 Provider 的模型前，请不要启用插件。启用或修改插件配置后，应重新启动现有会话，以保持工具集和 Prompt Cache 稳定。
+在审阅代码并选择与主 Agent 同 Provider 的模型前，请不要启用插件。启用插件后，应重新启动现有会话，以保持工具集和 Prompt Cache 稳定；仅修改模型映射无需重启会话。

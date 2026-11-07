@@ -27,7 +27,7 @@ def _bound_state(*, clock=None) -> tuple[DeliveryState, str]:
         )
         is None
     )
-    delivery_id = state.create(owner=OWNER, writer_model="writer/model")
+    delivery_id = state.create(owner=OWNER)
     assert state.bind(
         delivery_id=delivery_id,
         owner=OWNER,
@@ -126,7 +126,7 @@ def test_final_delivery_is_attempted_at_most_once_per_turn() -> None:
 
 def test_bind_requires_matching_owner_and_reserved_batch() -> None:
     state = DeliveryState()
-    delivery_id = state.create(owner=OWNER, writer_model="writer/model")
+    delivery_id = state.create(owner=OWNER)
     assert not state.bind(
         delivery_id=delivery_id,
         owner=OWNER,
@@ -144,7 +144,7 @@ def test_bind_requires_matching_owner_and_reserved_batch() -> None:
         )
         is None
     )
-    delivery_id = state.create(owner=OWNER, writer_model="writer/model")
+    delivery_id = state.create(owner=OWNER)
     other_owner = ("default", "task-2", "session-2")
     assert not state.bind(
         delivery_id=delivery_id,
@@ -162,6 +162,7 @@ def test_route_is_replayed_only_for_the_same_logical_request() -> None:
             owner=OWNER,
             turn_id="turn-1",
             api_request_id="turn-1:api:4",
+            writer_model="writer/model",
         )
         is None
     )
@@ -170,11 +171,13 @@ def test_route_is_replayed_only_for_the_same_logical_request() -> None:
         owner=OWNER,
         turn_id="turn-1",
         api_request_id="turn-1:api:5",
+        writer_model="writer/model",
     )
     retry = state.route(
         owner=OWNER,
         turn_id="turn-1",
         api_request_id="turn-1:api:5",
+        writer_model="changed/model",
     )
     assert first is not None
     assert first == retry
@@ -195,6 +198,7 @@ def test_route_is_replayed_only_for_the_same_logical_request() -> None:
             owner=OWNER,
             turn_id="turn-1",
             api_request_id="turn-1:api:6",
+            writer_model="writer/model",
         )
         is None
     )
@@ -207,6 +211,7 @@ def test_writer_tool_call_is_blocked_then_default_route_takes_over() -> None:
             owner=OWNER,
             turn_id="turn-1",
             api_request_id="turn-1:api:5",
+            writer_model="writer/model",
         )
         is not None
     )
@@ -233,6 +238,7 @@ def test_writer_tool_call_is_blocked_then_default_route_takes_over() -> None:
             owner=OWNER,
             turn_id="turn-1",
             api_request_id="turn-1:api:6",
+            writer_model="writer/model",
         )
         is None
     )
@@ -246,6 +252,7 @@ def test_writer_error_disarms_before_a_retry() -> None:
             owner=OWNER,
             turn_id="turn-1",
             api_request_id="turn-1:api:5",
+            writer_model="writer/model",
         )
         is not None
     )
@@ -259,6 +266,7 @@ def test_writer_error_disarms_before_a_retry() -> None:
             owner=OWNER,
             turn_id="turn-1",
             api_request_id="turn-1:api:5",
+            writer_model="writer/model",
         )
         is None
     )
@@ -273,6 +281,21 @@ def test_expired_handoffs_fail_open() -> None:
             owner=OWNER,
             turn_id="turn-1",
             api_request_id="turn-1:api:5",
+            writer_model="writer/model",
+        )
+        is None
+    )
+    assert state.snapshot()["active"] == 0
+
+
+def test_missing_model_for_target_provider_disarms_the_handoff() -> None:
+    state, _ = _bound_state()
+    assert (
+        state.route(
+            owner=OWNER,
+            turn_id="turn-1",
+            api_request_id="turn-1:api:5",
+            writer_model=None,
         )
         is None
     )

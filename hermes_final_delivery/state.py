@@ -24,7 +24,6 @@ Phase: TypeAlias = Literal["armed", "routing", "takeover"]
 class CreatedHandoff:
     delivery_id: str
     owner: Owner
-    writer_model: str
     created_at: float
 
 
@@ -35,11 +34,11 @@ class ActiveHandoff:
     turn_id: str
     source_api_request_id: str
     source_tool_call_id: str
-    writer_model: str
     created_at: float
     updated_at: float
     phase: Phase = "armed"
     target_api_request_id: str | None = None
+    routed_model: str | None = None
 
 
 @dataclass(slots=True)
@@ -118,7 +117,7 @@ class DeliveryState:
             self._trim_locked()
             return None
 
-    def create(self, *, owner: Owner, writer_model: str) -> str:
+    def create(self, *, owner: Owner) -> str:
         """Create an opaque handoff record. The draft deliberately is not accepted."""
         now = self._clock()
         delivery_id = f"fd_{secrets.token_urlsafe(12)}"
@@ -127,7 +126,6 @@ class DeliveryState:
             self._created[delivery_id] = CreatedHandoff(
                 delivery_id=delivery_id,
                 owner=owner,
-                writer_model=writer_model,
                 created_at=now,
             )
             self._trim_locked()
@@ -172,7 +170,6 @@ class DeliveryState:
                 turn_id=turn_id,
                 source_api_request_id=source_api_request_id,
                 source_tool_call_id=source_tool_call_id,
-                writer_model=created.writer_model,
                 created_at=created.created_at,
                 updated_at=now,
             )
@@ -185,6 +182,7 @@ class DeliveryState:
         owner: Owner,
         turn_id: str,
         api_request_id: str,
+        writer_model: str | None,
     ) -> RouteLease | None:
         """Acquire or replay the lease for exactly one logical provider request."""
         if not turn_id or not api_request_id:
@@ -201,8 +199,13 @@ class DeliveryState:
             if active.phase == "armed":
                 if api_request_id == active.source_api_request_id:
                     return None
+                selected_model = str(writer_model or "").strip()
+                if not selected_model:
+                    self._active.pop(turn_key, None)
+                    return None
                 active.phase = "routing"
                 active.target_api_request_id = api_request_id
+                active.routed_model = selected_model
                 active.updated_at = now
             elif active.phase == "routing":
                 if api_request_id != active.target_api_request_id:
@@ -214,9 +217,12 @@ class DeliveryState:
                     self._active.pop(turn_key, None)
                 return None
 
+            if not active.routed_model:
+                self._active.pop(turn_key, None)
+                return None
             return RouteLease(
                 delivery_id=active.delivery_id,
-                writer_model=active.writer_model,
+                writer_model=active.routed_model,
             )
 
     def complete_response(

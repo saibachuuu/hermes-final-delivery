@@ -12,14 +12,19 @@ class FakeContext:
     profile_name = "default"
 
     def __init__(self, config: dict[str, Any] | None = None) -> None:
-        self.config = config or {}
+        self.config = dict(config or {})
         self.tools: dict[str, Any] = {}
         self.hooks: dict[str, Any] = {}
         self.middleware: dict[str, Any] = {}
+        self.commands: dict[str, Any] = {}
+        self.cli_commands: dict[str, Any] = {}
         self.unload_callbacks: list[Any] = []
 
     def get_config(self, key: str, default: Any = None) -> Any:
         return self.config.get(key, default)
+
+    def set_config(self, key: str, value: Any) -> None:
+        self.config[key] = value
 
     def register_tool(self, name: str, **kwargs: Any) -> None:
         self.tools[name] = kwargs
@@ -29,6 +34,12 @@ class FakeContext:
 
     def register_middleware(self, name: str, callback: Any) -> None:
         self.middleware[name] = callback
+
+    def register_command(self, name: str, **kwargs: Any) -> None:
+        self.commands[name] = kwargs
+
+    def register_cli_command(self, name: str, **kwargs: Any) -> None:
+        self.cli_commands[name] = kwargs
 
     def on_unload(self, callback: Any) -> None:
         self.unload_callbacks.append(callback)
@@ -76,6 +87,8 @@ def test_registers_declared_components() -> None:
         "on_session_end",
     }
     assert set(ctx.middleware) == {"llm_request"}
+    assert set(ctx.commands) == {"final-delivery-model"}
+    assert set(ctx.cli_commands) == {"final-delivery-model"}
     assert len(ctx.unload_callbacks) == 1
 
 
@@ -132,6 +145,37 @@ def test_handoff_rewrites_one_request_and_strips_tool_controls() -> None:
         **{**identity, "api_request_id": "turn-1:api:6"},
     )
     assert later is None
+
+
+def test_provider_specific_model_wins_over_fallback() -> None:
+    ctx = _context(
+        {
+            "writer_models": {"OpenRouter": "writer/openrouter"},
+            "writer_model": "writer/fallback",
+        }
+    )
+    _, identity = _arm(ctx)
+    outcome = ctx.middleware["llm_request"](
+        request={"model": "default/model"},
+        provider="OPENROUTER",
+        **{**identity, "api_request_id": "turn-1:api:5"},
+    )
+    assert outcome is not None
+    assert outcome["request"]["model"] == "writer/openrouter"
+
+
+def test_unmapped_provider_without_fallback_uses_default_route() -> None:
+    ctx = _context({"writer_models": {"openrouter": "writer/openrouter"}})
+    _, identity = _arm(ctx)
+    target = {**identity, "api_request_id": "turn-1:api:5"}
+    assert (
+        ctx.middleware["llm_request"](
+            request={"model": "default/model"},
+            provider="anthropic",
+            **target,
+        )
+        is None
+    )
 
 
 def test_writer_tool_call_is_blocked_and_next_request_uses_default() -> None:

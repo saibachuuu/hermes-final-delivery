@@ -9,17 +9,16 @@ more expressive model. It implements the **same-provider one-request route** (th
 2. It calls `final_delivery` alone with a complete, user-ready `draft`.
 3. The plugin changes only the next logical LLM request's `model` field and removes every tool
    definition/control field from that request.
-4. The configured writer model streams the final response normally.
+4. The writer model configured for the current provider streams the final response normally.
 5. The route lease is consumed; all later requests use the main model again.
 
 The plugin never changes Hermes' global/default model setting.
 
 ## Important constraint
 
-`writer_model` must be reachable through the main agent's **current provider, client, and API
-mode**. For example, two model IDs exposed by the same gateway can work. This plugin cannot use
-an OpenAI client for one request and silently turn it into an Anthropic or unrelated-provider
-client.
+Every entry in `writer_models` must be reachable through that provider's **current client and API
+mode**. For example, two model IDs exposed by the same gateway can work. This plugin cannot use an
+OpenAI client for one request and silently turn it into an Anthropic or unrelated-provider client.
 
 Because this is a main-loop route, the writer model receives the request's existing conversation
 history, not only `draft`. Use models on a provider you trust for the current conversation.
@@ -36,14 +35,48 @@ plugins:
   entries:
     hermes-final-delivery:
       settings:
-        writer_model: "YOUR-SAME-PROVIDER-MODEL-ID"
+        writer_models:
+          openrouter: "anthropic/claude-sonnet-4.5"
+          ollama: "qwen3:14b"
+        writer_model: "OPTIONAL-FALLBACK-MODEL-ID"
         max_draft_chars: 20000
         pending_ttl_seconds: 300
 ```
 
-`writer_model` is intentionally empty by default. Until it is configured, `final_delivery`
-returns an error and tells the main model to send its own draft, rather than routing somewhere
-unexpected.
+Provider IDs are normalized to lowercase. A matching `writer_models` entry wins; `writer_model`
+is an optional fallback for providers without an entry. All routes are empty by default. Until at
+least one route is configured, `final_delivery` returns an error and tells the main model to send
+its own draft rather than routing somewhere unexpected. If some routes exist but the current
+provider has no match or fallback, that handoff safely stays on the default model. Use the fallback
+only when the same model ID is valid on every otherwise-unmapped provider you use.
+
+## Model configuration commands
+
+The plugin registers a host-safe in-session command:
+
+```text
+/final-delivery-model list
+/final-delivery-model set openrouter anthropic/claude-sonnet-4.5
+/final-delivery-model unset openrouter
+/final-delivery-model default fallback/model-id
+/final-delivery-model clear-default
+```
+
+These commands update the active profile's plugin settings. The mapping is read when the handoff
+request is built, so changes apply to the next handoff without changing the session's tool set.
+
+It also registers the equivalent terminal command when Hermes runs third-party plugins in process:
+
+```powershell
+hermes final-delivery-model list
+hermes final-delivery-model set openrouter anthropic/claude-sonnet-4.5
+```
+
+Hermes deliberately skips plugin `hermes <command>` registration when
+`plugins.isolation: host`, because its local `argparse` parser cannot cross the plugin-host process
+boundary. In that mode, use `/final-delivery-model` or edit the plugin settings through Hermes'
+normal configuration surface. Only trusted users should be allowed to run the mutating slash
+commands, because they update profile-scoped plugin configuration.
 
 ## Safety and failure behavior
 
@@ -83,8 +116,8 @@ hermes plugins validate C:\Users\88888888\user-workshop\hermes-final-delivery
 
 First run the validation commands above. Then copy this directory to the active profile's plugin
 directory as `hermes-final-delivery` (normally
-`$HOME\.hermes\plugins\hermes-final-delivery`), enable it, configure `writer_model`, and start a
-new Hermes session:
+`$HOME\.hermes\plugins\hermes-final-delivery`), enable it, configure at least one
+`writer_models` route or the `writer_model` fallback, and start a new Hermes session:
 
 ```powershell
 hermes plugins enable hermes-final-delivery
