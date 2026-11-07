@@ -1,0 +1,35 @@
+name: hermes-final-delivery
+version: 0.1.0
+kind: standalone
+description: Route one post-tool final reply to a configured model on the current provider
+license: MIT
+tags:
+  - agent
+  - routing
+  - writing
+provides_tools:
+  - final_delivery
+provides_hooks:
+  - pre_tool_call
+  - post_tool_call
+  - post_api_request
+  - api_request_error
+  - on_session_end
+provides_middleware:
+  - llm_request
+config_schema:
+  writer_model:
+    type: str
+    default: ""
+    required: false
+    description: Model ID for the one-response handoff; it must use the main agent's current provider, client, and API mode
+  max_draft_chars:
+    type: int
+    default: 20000
+    required: false
+    description: Maximum number of characters accepted in the final_delivery draft
+  pending_ttl_seconds:
+    type: int
+    default: 300
+    required: false
+    description: Lifetime of an incomplete handoff before it is discarded
